@@ -64,8 +64,8 @@ button{cursor:pointer;border:none;background:none;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
 .header{position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
-.header-brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:14px;letter-spacing:-.2px;color:var(--text);white-space:nowrap;user-select:none;}
-.header-logo{width:26px;height:26px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.header-brand{display:flex;align-items:center;user-select:none;}
+.header-logo-img{height:32px;width:auto;display:block;}
 .header-right{display:flex;align-items:center;gap:10px;}
 .header-date{font-size:12px;color:var(--text-muted);white-space:nowrap;}
 .header-hours{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;background:var(--accent-light);color:var(--accent);padding:3px 9px;border-radius:999px;display:none;}
@@ -129,6 +129,7 @@ button{cursor:pointer;border:none;background:none;}
 
 .badge{display:inline-flex;align-items:center;padding:2px 6px;border-radius:var(--radius-xs);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;}
 .bdg-cat{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);}
+.bdg-owner{background:var(--info-light);color:var(--info);}
 .bdg-cours{background:var(--info-light);color:var(--info);}
 .bdg-termine{background:var(--success-light);color:var(--success);}
 .bdg-attente{background:var(--warning-light);color:var(--warning);}
@@ -322,12 +323,7 @@ button{cursor:pointer;border:none;background:none;}
 
   <header class="header">
     <div class="header-brand">
-      <div class="header-logo">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M2 7h10M7 2v10" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-      </div>
-      Netforce
+      <img src="netforce-logo.png" alt="Netforce" class="header-logo-img">
     </div>
     <div class="header-right">
       <span id="hdr-hours" class="header-hours"></span>
@@ -339,7 +335,7 @@ button{cursor:pointer;border:none;background:none;}
 
   <nav class="nav">
     <button class="nav-tab active" onclick="switchView('today',this)">Aujourd'hui</button>
-    <button class="nav-tab" onclick="switchView('tasks',this)">Mes tâches</button>
+    <button class="nav-tab" onclick="switchView('tasks',this)">Tâches</button>
     <button class="nav-tab" onclick="switchView('journal',this)">Journal</button>
     <button class="nav-tab" onclick="switchView('export',this)">Exporter</button>
     <button class="nav-tab" onclick="switchView('settings',this)">Paramètres</button>
@@ -364,7 +360,7 @@ button{cursor:pointer;border:none;background:none;}
   <div id="view-tasks" class="view">
     <div class="container">
       <div class="sec-hd">
-        <div class="sec-title">Mes tâches</div>
+        <div class="sec-title">Tâches</div>
         <button class="btn btn-primary btn-sm" onclick="openTaskModal()">+ Nouvelle tâche</button>
       </div>
       <div class="filter-bar">
@@ -571,7 +567,7 @@ const db    = getFirestore(fbApp);
 
 let currentUser = null;
 let authMode    = 'login';
-let D = { settings:{ name:'', validators:['Laurent','Sébastien'] }, tasks:[], logs:[] };
+let D = { settings:{ name:'', validators:['Laurent','Sébastien'] }, tasks:[], logs:[], users:{} };
 
 // ── SCREENS ──────────────────────────────────────────────
 function showLoading() {
@@ -600,7 +596,7 @@ onAuthStateChanged(auth, async user => {
     showApp();
   } else {
     currentUser = null;
-    D = { settings:{ name:'', validators:['Laurent','Sébastien'] }, tasks:[], logs:[] };
+    D = { settings:{ name:'', validators:['Laurent','Sébastien'] }, tasks:[], logs:[], users:{} };
     showAuthScreen();
   }
 });
@@ -668,10 +664,12 @@ async function loadUserData() {
   D.settings  = uSnap.exists()
     ? { validators:['Laurent','Sébastien'], ...uSnap.data() }
     : { name:'', validators:['Laurent','Sébastien'] };
-  const tSnap = await getDocs(query(collection(db,'tasks'), where('ownerId','==',uid)));
+  const tSnap = await getDocs(collection(db,'tasks'));
   D.tasks = tSnap.docs.map(d => ({ id:d.id, ...d.data() }));
   const lSnap = await getDocs(query(collection(db,'logs'),  where('ownerId','==',uid)));
   D.logs  = lSnap.docs.map(d => ({ id:d.id, ...d.data() }));
+  const usersSnap = await getDocs(collection(db,'users'));
+  D.users = Object.fromEntries(usersSnap.docs.map(d=>[d.id, d.data()]));
 }
 
 // ── UTILS ─────────────────────────────────────────────────
@@ -696,6 +694,13 @@ function initials(n) {
 }
 function ownerName() {
   return D.settings.name || currentUser?.email?.split('@')[0] || '?';
+}
+function isAdmin() {
+  return currentUser?.email === 'gerardraphael01@gmail.com' || D.settings?.isAdmin === true;
+}
+function taskOwnerLabel(task) {
+  const u = D.users[task.ownerId];
+  return u?.name || task.ownerId?.split('@')[0] || '?';
 }
 function latestLog(id) {
   return D.logs.filter(l=>l.taskId===id).sort((a,b)=>b.date.localeCompare(a.date))[0]||null;
@@ -763,7 +768,7 @@ window.switchView = function(name, btn) {
 
 // ── TODAY ─────────────────────────────────────────────────
 function renderToday() {
-  const active=activeTasks();
+  const active=activeTasks().filter(t=>t.ownerId===currentUser?.uid);
   const todayLogs=D.logs.filter(l=>l.date===today());
   const totalH=todayLogs.reduce((s,l)=>s+(+l.timeSpent||0),0);
   const loggedN=active.filter(a=>!!todayLog(a.id)).length;
@@ -811,6 +816,9 @@ function taskCardHTML(task, mode) {
   const pClass=`priority-${(task.priority||'normale').toLowerCase()}`;
   const sClass='bdg-'+statusClass(status);
   const atts=getLocalAtts(task.id);
+  const isOwn = task.ownerId === currentUser?.uid;
+  const canEdit = isOwn || isAdmin();
+  const ownerBadge = !isOwn ? `<span class="badge bdg-owner">👤 ${esc(taskOwnerLabel(task))}</span>` : '';
 
   let footer='';
   if(mode==='today'){
@@ -824,11 +832,11 @@ function taskCardHTML(task, mode) {
     footer=`<div class="task-foot"><span class="task-foot-meta">Dernière activité : ${lastDate} · ${totalH}h total</span>
       ${!task.archived?`
         <button class="btn btn-ghost btn-xs" onclick="toggleHist('${task.id}')" title="Historique">📋 ${logCount}</button>
-        <button class="btn btn-ghost btn-xs" onclick="editTask('${task.id}')">Modifier</button>
-        <button class="btn btn-primary btn-xs" onclick="toggleLF('${task.id}')">Pointer</button>
-        <button class="btn btn-ghost btn-xs" onclick="archiveTask('${task.id}')" title="Archiver">📦</button>`
+        ${canEdit?`<button class="btn btn-ghost btn-xs" onclick="editTask('${task.id}')">Modifier</button>`:''}
+        ${isOwn?`<button class="btn btn-primary btn-xs" onclick="toggleLF('${task.id}')">Pointer</button>`:''}
+        ${canEdit?`<button class="btn btn-ghost btn-xs" onclick="archiveTask('${task.id}')" title="Archiver">📦</button>`:''}`
       :`<button class="btn btn-ghost btn-xs" onclick="toggleHist('${task.id}')" title="Historique">📋 ${logCount}</button>
-        <button class="btn btn-secondary btn-xs" onclick="unarchiveTask('${task.id}')">Restaurer</button>`}
+        ${canEdit?`<button class="btn btn-secondary btn-xs" onclick="unarchiveTask('${task.id}')">Restaurer</button>`:''}`}
     </div>`;
   }
 
@@ -846,6 +854,7 @@ function taskCardHTML(task, mode) {
       <span class="badge bdg-cat">${esc(task.category||'—')}</span>
       <span class="badge ${sClass}">${status}</span>
       ${task.priority==='Haute'?'<span class="badge bdg-haute">Haute</span>':''}
+      ${ownerBadge}
       ${task.validator?`<span style="font-size:11px;color:var(--text-xmuted)">→ ${esc(task.validator)}</span>`:''}
       ${atts.length?`<span style="font-size:11px;color:var(--info)">📎 ${atts.length}</span>`:''}
     </div>
