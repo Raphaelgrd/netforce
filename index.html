@@ -257,6 +257,14 @@ button{cursor:pointer;border:none;background:none;}
 .acct-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
 .acct-panel-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
 .acct-panel-avatar{width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.admin-section{margin-top:24px;}
+.admin-section-title{font-size:13px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-muted);margin-bottom:12px;}
+.user-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);margin-bottom:8px;}
+.user-row-av{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.user-row-info{flex:1;min-width:0;}
+.user-row-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.user-row-email{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bdg-admin{background:var(--accent-light);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;letter-spacing:.3px;text-transform:uppercase;}
 .auth-err{display:none;background:var(--danger-light);color:var(--danger);border-radius:var(--radius-sm);padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.5;}
 .divider{height:1px;background:var(--border);margin:16px 0;}
 
@@ -441,6 +449,7 @@ button{cursor:pointer;border:none;background:none;}
           <button class="btn btn-danger  btn-sm" onclick="clearData()">Effacer mes données</button>
         </div>
       </div>
+      <div id="admin-panel"></div>
     </div>
   </div>
 
@@ -644,7 +653,7 @@ window.submitAuth = async function() {
       if (!name) { showAuthErr('Saisissez votre prénom.'); btn.disabled=false; return; }
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       await setDoc(doc(db,'users',cred.user.uid), {
-        name, validators:['Laurent','Sébastien'], createdAt: new Date().toISOString()
+        name, email: cred.user.email, validators:['Laurent','Sébastien'], isAdmin: false, createdAt: new Date().toISOString()
       });
     } else {
       await signInWithEmailAndPassword(auth, email, pass);
@@ -664,6 +673,10 @@ async function loadUserData() {
   D.settings  = uSnap.exists()
     ? { validators:['Laurent','Sébastien'], ...uSnap.data() }
     : { name:'', validators:['Laurent','Sébastien'] };
+  if(currentUser.email==='gerardraphael01@gmail.com' && !D.settings.isAdmin){
+    await setDoc(doc(db,'users',uid),{isAdmin:true},{merge:true});
+    D.settings.isAdmin=true;
+  }
   const tSnap = await getDocs(collection(db,'tasks'));
   D.tasks = tSnap.docs.map(d => ({ id:d.id, ...d.data() }));
   const lSnap = await getDocs(query(collection(db,'logs'),  where('ownerId','==',uid)));
@@ -1186,13 +1199,48 @@ function renderSettings(){
   document.getElementById('sett-email').textContent=currentUser?.email||'';
   document.getElementById('sett-avatar').textContent=initials(name||ownerName());
   document.getElementById('sett-acct-name').textContent=name||ownerName();
+  renderAdminPanel();
 }
+function renderAdminPanel(){
+  const el=document.getElementById('admin-panel'); if(!el) return;
+  if(!isAdmin()){ el.innerHTML=''; return; }
+  const users=Object.entries(D.users);
+  if(!users.length){ el.innerHTML=''; return; }
+  const rows=users.map(([uid,u])=>{
+    const isSelf=uid===currentUser.uid;
+    const name=u.name||u.email?.split('@')[0]||'?';
+    const adminBadge=u.isAdmin?'<span class="bdg-admin">Admin</span>':'';
+    const toggleLabel=u.isAdmin?'Retirer admin':'Rendre admin';
+    const toggleBtn=isSelf?'':`<button class="btn btn-ghost btn-xs" onclick="toggleAdminStatus('${uid}',${!u.isAdmin})">${toggleLabel}</button>`;
+    return `<div class="user-row">
+      <div class="user-row-av">${esc(initials(name))}</div>
+      <div class="user-row-info">
+        <div class="user-row-name">${esc(name)} ${adminBadge}</div>
+        <div class="user-row-email">${esc(u.email||'—')}</div>
+      </div>
+      ${toggleBtn}
+    </div>`;
+  }).join('');
+  el.innerHTML=`<div class="acct-panel admin-section">
+    <div class="admin-section-title">Administration · ${users.length} utilisateur${users.length>1?'s':''}</div>
+    ${rows}
+  </div>`;
+}
+window.toggleAdminStatus=async function(uid, makeAdmin){
+  try{
+    await setDoc(doc(db,'users',uid),{isAdmin:makeAdmin},{merge:true});
+    if(D.users[uid]) D.users[uid].isAdmin=makeAdmin;
+    renderAdminPanel();
+    toast(makeAdmin?'Utilisateur promu admin':'Droits admin retirés','success');
+  } catch(e){ toast('Erreur','error'); }
+};
 window.saveSettings=async function(){
   const name=document.getElementById('sett-name').value.trim();
   const validators=document.getElementById('sett-val').value.split('\n').map(v=>v.trim()).filter(Boolean);
   try{
     await setDoc(doc(db,'users',currentUser.uid),{name,validators},{merge:true});
     D.settings.name=name; D.settings.validators=validators;
+    if(D.users[currentUser.uid]) D.users[currentUser.uid].name=name;
     renderHeader(); renderSettings(); toast('Paramètres sauvegardés','success');
   } catch(e){ toast('Erreur de sauvegarde','error'); }
 };
