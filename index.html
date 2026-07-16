@@ -130,7 +130,17 @@ button{cursor:pointer;border:none;background:none;}
 .badge{display:inline-flex;align-items:center;padding:2px 6px;border-radius:var(--radius-xs);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;}
 .bdg-cat{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);}
 .bdg-owner{background:var(--info-light);color:var(--info);}
+.bdg-admin-only{background:var(--accent-light);color:var(--accent);}
 .bdg-cours{background:var(--info-light);color:var(--info);}
+.share-wrap{max-height:0;overflow:hidden;transition:max-height .25s ease;}
+.share-wrap.open{max-height:400px;}
+.share-inner{border-top:1px solid var(--border);padding:12px 16px;}
+.share-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);}
+.share-row:last-child{border-bottom:none;}
+.share-row-av{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.share-row-name{flex:1;font-size:13px;color:var(--text);}
+.radio-row{display:flex;gap:16px;margin-top:4px;}
+.radio-row label{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer;}
 .bdg-termine{background:var(--success-light);color:var(--success);}
 .bdg-attente{background:var(--warning-light);color:var(--warning);}
 .bdg-bloque{background:var(--danger-light);color:var(--danger);}
@@ -502,6 +512,19 @@ button{cursor:pointer;border:none;background:none;}
         <label class="fl" for="tm-block">Blocage / En attente de</label>
         <input class="fi" type="text" id="tm-block" placeholder="ex : Retour de Laurent">
       </div>
+      <div id="tm-admin-fields" style="display:none">
+        <div class="fg" style="margin-top:13px">
+          <label class="fl" for="tm-assignee">Assigné à</label>
+          <select class="fs" id="tm-assignee"></select>
+        </div>
+        <div class="fg" style="margin-top:13px">
+          <label class="fl">Visibilité</label>
+          <div class="radio-row">
+            <label><input type="radio" name="tm-vis" value="all" checked> Tout le monde</label>
+            <label><input type="radio" name="tm-vis" value="admin"> Admins uniquement</label>
+          </div>
+        </div>
+      </div>
       <div class="fg" style="margin-top:13px">
         <label class="fl">Pièces jointes</label>
         <div class="file-zone" id="tm-dropzone"
@@ -721,7 +744,13 @@ function latestLog(id) {
 function todayLog(id) {
   return D.logs.find(l=>l.taskId===id&&l.date===today())||null;
 }
-function activeTasks() { return D.tasks.filter(t=>!t.archived); }
+function canSeeTask(task) {
+  if(isAdmin()) return true;
+  if(task.sharedWith?.includes(currentUser.uid)) return true;
+  if(task.visibility==='admin') return false;
+  return true;
+}
+function activeTasks() { return D.tasks.filter(t=>!t.archived&&canSeeTask(t)); }
 function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -832,6 +861,9 @@ function taskCardHTML(task, mode) {
   const isOwn = task.ownerId === currentUser?.uid;
   const canEdit = isOwn || isAdmin();
   const ownerBadge = !isOwn ? `<span class="badge bdg-owner">👤 ${esc(taskOwnerLabel(task))}</span>` : '';
+  const adminOnlyBadge = task.visibility==='admin' ? `<span class="badge bdg-admin-only">🔒 Admin</span>` : '';
+  const sharedUsers = (task.sharedWith||[]).map(uid=>{ const u=D.users[uid]; return u?.name||u?.email?.split('@')[0]||'?'; });
+  const sharedBadge = sharedUsers.length&&isAdmin() ? `<span style="font-size:11px;color:var(--text-muted)">Partagé avec : ${sharedUsers.join(', ')}</span>` : '';
 
   let footer='';
   if(mode==='today'){
@@ -847,6 +879,7 @@ function taskCardHTML(task, mode) {
         <button class="btn btn-ghost btn-xs" onclick="toggleHist('${task.id}')" title="Historique">📋 ${logCount}</button>
         ${canEdit?`<button class="btn btn-ghost btn-xs" onclick="editTask('${task.id}')">Modifier</button>`:''}
         ${isOwn?`<button class="btn btn-primary btn-xs" onclick="toggleLF('${task.id}')">Pointer</button>`:''}
+        ${isAdmin()?`<button class="btn btn-ghost btn-xs" onclick="toggleShare('${task.id}')" title="Partager">🔗 Partager</button>`:''}
         ${canEdit?`<button class="btn btn-ghost btn-xs" onclick="archiveTask('${task.id}')" title="Archiver">📦</button>`:''}`
       :`<button class="btn btn-ghost btn-xs" onclick="toggleHist('${task.id}')" title="Historique">📋 ${logCount}</button>
         ${canEdit?`<button class="btn btn-secondary btn-xs" onclick="unarchiveTask('${task.id}')">Restaurer</button>`:''}`}
@@ -867,9 +900,11 @@ function taskCardHTML(task, mode) {
       <span class="badge bdg-cat">${esc(task.category||'—')}</span>
       <span class="badge ${sClass}">${status}</span>
       ${task.priority==='Haute'?'<span class="badge bdg-haute">Haute</span>':''}
+      ${adminOnlyBadge}
       ${ownerBadge}
       ${task.validator?`<span style="font-size:11px;color:var(--text-xmuted)">→ ${esc(task.validator)}</span>`:''}
       ${atts.length?`<span style="font-size:11px;color:var(--info)">📎 ${atts.length}</span>`:''}
+      ${sharedBadge}
     </div>
   </div></div>
   <div class="progress-wrap">
@@ -878,6 +913,7 @@ function taskCardHTML(task, mode) {
   </div>
   ${attHTML}${footer}
   ${mode==='tasks'?`<div class="hist-wrap" id="hist-${task.id}"><div class="hist-inner" id="hist-inner-${task.id}"></div></div>`:''}
+  ${mode==='tasks'&&isAdmin()?`<div class="share-wrap" id="share-${task.id}"><div class="share-inner" id="share-inner-${task.id}"></div></div>`:''}
   <div class="lfw" id="lfw-${task.id}">
     <div class="log-form">
       <div class="lf-grid">
@@ -964,7 +1000,8 @@ window.setFilter=function(f){
   renderTasks();
 };
 function renderTasks(){
-  const tasks=taskFilter==='active'?D.tasks.filter(t=>!t.archived):taskFilter==='archived'?D.tasks.filter(t=>t.archived):D.tasks;
+  const visible=D.tasks.filter(t=>canSeeTask(t));
+  const tasks=taskFilter==='active'?visible.filter(t=>!t.archived):taskFilter==='archived'?visible.filter(t=>t.archived):visible;
   const list=document.getElementById('tasks-list');
   if(!tasks.length){ list.innerHTML=`<div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">Aucune tâche</div><div class="empty-desc">Créez votre première tâche.</div></div>`; return; }
   list.innerHTML=tasks.map(t=>taskCardHTML(t,'tasks')).join('');
@@ -1011,6 +1048,17 @@ function openTaskModal(taskId=null){
   const sel=document.getElementById('tm-val');
   sel.innerHTML='<option value="">Aucun</option>';
   (D.settings.validators||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); });
+  const adminFields=document.getElementById('tm-admin-fields');
+  adminFields.style.display=isAdmin()?'block':'none';
+  if(isAdmin()){
+    const asel=document.getElementById('tm-assignee');
+    asel.innerHTML='';
+    const meOpt=document.createElement('option'); meOpt.value=currentUser.uid; meOpt.textContent='Moi-même'; asel.appendChild(meOpt);
+    Object.entries(D.users).forEach(([uid,u])=>{
+      if(uid===currentUser.uid) return;
+      const o=document.createElement('option'); o.value=uid; o.textContent=u.name||u.email?.split('@')[0]||uid; asel.appendChild(o);
+    });
+  }
   if(isEdit){
     const task=D.tasks.find(t=>t.id===taskId); if(!task) return;
     document.getElementById('tm-id').value=taskId;
@@ -1021,6 +1069,10 @@ function openTaskModal(taskId=null){
     document.getElementById('tm-val').value=task.validator||'';
     document.getElementById('tm-sp').value=task.sharepointLink||'';
     document.getElementById('tm-block').value=task.blocking||'';
+    if(isAdmin()){
+      document.getElementById('tm-assignee').value=task.ownerId||currentUser.uid;
+      document.querySelectorAll('input[name="tm-vis"]').forEach(r=>r.checked=(r.value===(task.visibility||'all')));
+    }
     pendingFiles=[...getLocalAtts(taskId)]; renderPendingFiles();
   } else {
     ['tm-id','tm-name','tm-desc','tm-sp','tm-block'].forEach(id=>document.getElementById(id).value='');
@@ -1028,6 +1080,7 @@ function openTaskModal(taskId=null){
     document.getElementById('tm-val').value=''; document.getElementById('tm-time').value=1;
     document.getElementById('tm-prog').value=0; document.getElementById('tm-prog-v').textContent='0%';
     document.getElementById('tm-stat').value='En cours';
+    if(isAdmin()) document.querySelectorAll('input[name="tm-vis"]').forEach(r=>r.checked=(r.value==='all'));
   }
   document.getElementById('task-overlay').classList.add('open');
   setTimeout(()=>document.getElementById('tm-name').focus(),100);
@@ -1048,14 +1101,17 @@ window.saveTaskModal=async function(){
     sharepointLink:document.getElementById('tm-sp').value.trim(),
     blocking:document.getElementById('tm-block').value.trim(),
   };
+  const assigneeId=isAdmin()&&document.getElementById('tm-assignee')?document.getElementById('tm-assignee').value:currentUser.uid;
+  const visibility=isAdmin()?([...document.querySelectorAll('input[name="tm-vis"]')].find(r=>r.checked)?.value||'all'):'all';
   try{
     if(editId){
-      await updateDoc(doc(db,'tasks',editId),data);
-      Object.assign(D.tasks.find(t=>t.id===editId),data);
+      const editExtra=isAdmin()?{ownerId:assigneeId,visibility}:{};
+      await updateDoc(doc(db,'tasks',editId),{...data,...editExtra});
+      Object.assign(D.tasks.find(t=>t.id===editId),{...data,...editExtra});
       saveLocalAtts(editId,pendingFiles);
       toast('Tâche modifiée','success');
     } else {
-      const taskData={...data,ownerId:currentUser.uid,archived:false,createdAt:today()};
+      const taskData={...data,ownerId:assigneeId,visibility,sharedWith:[],archived:false,createdAt:today()};
       const ref=await addDoc(collection(db,'tasks'),taskData);
       D.tasks.push({id:ref.id,...taskData});
       saveLocalAtts(ref.id,pendingFiles);
@@ -1100,6 +1156,44 @@ function renderHistInner(id){
     </table>
     <div class="hist-total">${logs.length} entrée${logs.length>1?'s':''} · ${totalH}h au total</div>`;
 }
+
+// ── SHARE ─────────────────────────────────────────────────
+const openShares=new Set();
+window.toggleShare=function(id){
+  const wrap=document.getElementById('share-'+id); if(!wrap) return;
+  if(openShares.has(id)){ wrap.classList.remove('open'); openShares.delete(id); }
+  else { openShares.add(id); renderShareInner(id); wrap.classList.add('open'); }
+};
+function renderShareInner(id){
+  const inner=document.getElementById('share-inner-'+id); if(!inner) return;
+  const task=D.tasks.find(t=>t.id===id); if(!task) return;
+  const shared=task.sharedWith||[];
+  const users=Object.entries(D.users).filter(([uid])=>uid!==task.ownerId);
+  if(!users.length){ inner.innerHTML='<div style="font-size:13px;color:var(--text-muted);padding:4px 0">Aucun autre utilisateur inscrit.</div>'; return; }
+  const rows=users.map(([uid,u])=>{
+    const name=u.name||u.email?.split('@')[0]||'?';
+    const isShared=shared.includes(uid);
+    return `<div class="share-row">
+      <div class="share-row-av">${esc(initials(name))}</div>
+      <div class="share-row-name">${esc(name)}</div>
+      <button class="btn ${isShared?'btn-secondary':'btn-primary'} btn-xs" onclick="shareTask('${id}','${uid}',${!isShared})">
+        ${isShared?'Retirer':'Partager'}
+      </button>
+    </div>`;
+  }).join('');
+  inner.innerHTML=`<div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Partager avec</div>${rows}`;
+}
+window.shareTask=async function(taskId, uid, add){
+  const task=D.tasks.find(t=>t.id===taskId); if(!task) return;
+  const current=task.sharedWith||[];
+  const updated=add?[...new Set([...current,uid])]:current.filter(u=>u!==uid);
+  try{
+    await updateDoc(doc(db,'tasks',taskId),{sharedWith:updated});
+    task.sharedWith=updated;
+    renderShareInner(taskId); renderTasks();
+    toast(add?'Tâche partagée':'Partage retiré','success');
+  } catch(e){ toast('Erreur','error'); }
+};
 
 // ── JOURNAL ───────────────────────────────────────────────
 let journalDate=today();
